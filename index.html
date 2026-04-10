@@ -12,6 +12,7 @@
       padding: 24px;
       text-align: center;
       background: #f7f7fb;
+      color: #222;
     }
     .card{
       background: #fff;
@@ -19,8 +20,10 @@
       padding: 20px;
       box-shadow: 0 10px 30px rgba(0,0,0,.08);
     }
-    h1{
-      margin-top: 0;
+    h1{ margin-top: 0; }
+    p.desc{
+      margin-top: 6px;
+      color: #555;
     }
     video, canvas, img{
       width: 100%;
@@ -29,9 +32,7 @@
       border-radius: 12px;
       margin-top: 12px;
     }
-    canvas{
-      display:none;
-    }
+    canvas{ display:none; }
     .row{
       margin-top: 16px;
       display:flex;
@@ -45,9 +46,18 @@
       padding:12px 18px;
       font-size:16px;
       cursor:pointer;
+      transition: .2s ease;
+    }
+    button:hover{ transform: translateY(-1px); }
+    button:disabled{
+      opacity:.6;
+      cursor:not-allowed;
+      transform:none;
     }
     .primary{ background:#6f42c1; color:#fff; }
     .secondary{ background:#e9ecef; color:#222; }
+    .success{ background:#198754; color:#fff; }
+
     #log{
       text-align:left;
       background:#f1f3f5;
@@ -56,24 +66,45 @@
       margin-top:16px;
       white-space:pre-wrap;
       font-size:13px;
+      min-height:100px;
+    }
+
+    .result{
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #eef7ee;
+      display: none;
+      text-align: left;
+      word-break: break-word;
+    }
+
+    .result a{
+      color:#0d6efd;
+      text-decoration:none;
+    }
+    .result a:hover{
+      text-decoration:underline;
     }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>ทดสอบกล้องบน GitHub Pages</h1>
-    <p>หน้านี้โฮสต์อยู่นอก Google Apps Script เพื่อให้เปิดกล้องได้ง่ายขึ้น</p>
+    <p class="desc">หน้านี้โฮสต์อยู่นอก Google Apps Script เพื่อให้เปิดกล้องได้ และส่งภาพเข้า Google Drive ผ่าน GAS</p>
 
     <div class="row">
       <button id="startBtn" class="primary">เปิดกล้อง</button>
       <button id="snapBtn" class="secondary">ถ่ายภาพ</button>
       <button id="stopBtn" class="secondary">ปิดกล้อง</button>
+      <button id="uploadBtn" class="success">ส่งเข้า GAS</button>
     </div>
 
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
     <img id="preview" alt="ภาพตัวอย่าง" style="display:none;">
 
+    <div id="result" class="result"></div>
     <div id="log"></div>
   </div>
 
@@ -81,34 +112,64 @@
     const startBtn = document.getElementById('startBtn');
     const snapBtn = document.getElementById('snapBtn');
     const stopBtn = document.getElementById('stopBtn');
+    const uploadBtn = document.getElementById('uploadBtn');
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const preview = document.getElementById('preview');
     const log = document.getElementById('log');
+    const resultBox = document.getElementById('result');
 
     let stream = null;
+    let capturedDataUrl = '';
+
+    // ===== ใส่ URL Web App /exec ของ GAS ตรงนี้ =====
+    const GAS_URL = 'ใส่_URL_WEB_APP_EXEC_ที่นี่';
 
     function write(msg){
       const time = new Date().toLocaleTimeString();
       log.textContent += `[${time}] ${msg}\n`;
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function showResult(html){
+      resultBox.style.display = 'block';
+      resultBox.innerHTML = html;
+    }
+
+    function clearResult(){
+      resultBox.style.display = 'none';
+      resultBox.innerHTML = '';
     }
 
     async function startCamera(){
+      clearResult();
       log.textContent = '';
+
       try{
         if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
           write('เบราว์เซอร์ไม่รองรับ getUserMedia');
           return;
         }
 
+        if(stream){
+          stream.getTracks().forEach(t => t.stop());
+          stream = null;
+        }
+
         write('กำลังขอสิทธิ์เปิดกล้อง...');
+
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
+          video: {
+            facingMode: 'user',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
           audio: false
         });
 
         video.srcObject = stream;
         await video.play();
+
         write('เปิดกล้องสำเร็จ');
       }catch(err){
         write('เปิดกล้องไม่สำเร็จ');
@@ -118,6 +179,8 @@
     }
 
     function snapPhoto(){
+      clearResult();
+
       if(!stream){
         write('กรุณาเปิดกล้องก่อน');
         return;
@@ -131,8 +194,8 @@
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, w, h);
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      preview.src = dataUrl;
+      capturedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      preview.src = capturedDataUrl;
       preview.style.display = 'block';
 
       write('ถ่ายภาพสำเร็จ');
@@ -144,12 +207,77 @@
         stream = null;
         video.srcObject = null;
         write('ปิดกล้องแล้ว');
+      }else{
+        write('ยังไม่มีกล้องที่เปิดอยู่');
+      }
+    }
+
+    async function uploadPhoto(){
+      clearResult();
+
+      if(!capturedDataUrl){
+        write('กรุณาถ่ายภาพก่อนส่ง');
+        return;
+      }
+
+      if(!GAS_URL || GAS_URL.includes('ใส่_URL_WEB_APP_EXEC_ที่นี่')){
+        write('https://script.googleusercontent.com/macros/echo?user_content_key=AWDtjMWXSVdr7-IXHoTmfLNRbNC77p4oU8klJsQaAsxV4rraGiKjNskFyHOfJ2EoyJSoX5HhwcQqnPEK3Jm2QgnwfYy4QO-5hnxVhh-iSY7xneg_ZNU7bsFHs69ZxVeTkhnKb84QPoAKWaJ9CKsusbLf6qHlooveXS_VKZKC4bIqI2zJaJt8OPEfxlk5bsIcO2wfFEMVG2cRkUhGsC2QrnUCVQDsLBKUvJLLe6ejQAYvWhinZJ-B-XqTetxHbHNiVPiB054pEtUNG1d9p8zJVLShQtReeCpgKQ&lib=MBM8L5Ou7l60OSVL9GcD2sKKUO1juqm10');
+        return;
+      }
+
+      try{
+        uploadBtn.disabled = true;
+        uploadBtn.textContent = 'กำลังส่ง...';
+
+        write('กำลังส่งภาพไป Google Apps Script...');
+
+        const res = await fetch(GAS_URL, {
+          method: 'POST',
+          body: JSON.stringify({
+            image: capturedDataUrl
+          })
+        });
+
+        const text = await res.text();
+        let result = null;
+
+        try{
+          result = JSON.parse(text);
+        }catch(parseErr){
+          throw new Error('ผลลัพธ์จาก GAS ไม่ใช่ JSON: ' + text);
+        }
+
+        if(result.status === 'success'){
+          write('ส่งภาพสำเร็จ');
+
+          showResult(
+            `<strong>บันทึกสำเร็จ</strong><br>` +
+            `ไฟล์: ${result.fileName || '-'}<br>` +
+            `ลิงก์: <a href="${result.url}" target="_blank" rel="noopener noreferrer">${result.url}</a>`
+          );
+
+          // ถ้าต้องการให้ปิดกล้องอัตโนมัติหลังส่งสำเร็จ ให้เปิดบรรทัดนี้
+          // stopCamera();
+
+        }else{
+          write('ส่งภาพไม่สำเร็จ: ' + (result.message || 'Unknown error'));
+          showResult(`<strong>เกิดข้อผิดพลาด</strong><br>${result.message || 'Unknown error'}`);
+        }
+
+      }catch(err){
+        write('เกิดข้อผิดพลาดขณะส่งภาพ');
+        write('Error: ' + err.message);
+        showResult(`<strong>ส่งไม่สำเร็จ</strong><br>${err.message}`);
+      }finally{
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'ส่งเข้า GAS';
       }
     }
 
     startBtn.addEventListener('click', startCamera);
     snapBtn.addEventListener('click', snapPhoto);
     stopBtn.addEventListener('click', stopCamera);
+    uploadBtn.addEventListener('click', uploadPhoto);
   </script>
 </body>
 </html>
